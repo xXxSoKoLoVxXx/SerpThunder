@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -304,6 +304,18 @@ class Program
                         }),
                         cancellationToken: cancellationToken);
                     break;
+                case "/return":
+                    await botClient.SendTextMessageAsync(chatId,
+                        "Чьё расписание вы хотите посмотреть?",
+                        replyMarkup: new InlineKeyboardMarkup(new[]
+                        {
+                        new[] { InlineKeyboardButton.WithCallbackData("Группы", "choose_group") },
+                        new[] { InlineKeyboardButton.WithCallbackData("Преподавателя", "choose_teacher") }
+                        }),
+                        cancellationToken: cancellationToken);
+                    break;
+
+
 
                 default:
                     await botClient.SendTextMessageAsync(chatId, "Неизвестная команда. Пожалуйста, выберите из меню.", cancellationToken: cancellationToken);
@@ -320,12 +332,12 @@ class Program
             if (callbackQuery.Data == "choose_group")
             {
                 subscriptionManager.SetState(chatId, "choose_group");
-                await SendGroupList(chatId, cancellationToken, currentFilePath);
+                await SendGroupList(chatId, cancellationToken, currentFilePath); // Отправляем список групп
             }
             else if (callbackQuery.Data == "choose_teacher")
             {
                 subscriptionManager.SetState(chatId, "choose_teacher");
-                await SendTeacherList(chatId, cancellationToken, currentFilePath);
+                await SendTeacherList(chatId, cancellationToken, currentFilePath); // Отправляем список преподавателей
             }
             else if (callbackQuery.Data == "skip_subscription")
             {
@@ -353,92 +365,97 @@ class Program
                 if (subscriptionManager.TryGetState(chatId, out var state) && state == "choose_group")
                 {
                     subscriptionManager.AddSubscription(chatId, "group", groupName);
-                    await botClient.SendTextMessageAsync(chatId, $"Вы подписались на рассылку для группы {groupName}.", cancellationToken: cancellationToken);
+                    await botClient.SendTextMessageAsync(chatId, $"Вы выбрали расписание для группы {groupName}.", cancellationToken: cancellationToken);
                     subscriptionManager.ClearState(chatId);
                 }
 
-                var schedule = GetGroupSchedule(currentFilePath, groupName);
-                var format = formatManager.GetFormat(chatId);
-
-                // Извлечение даты из текста расписания
-                var dateLine = schedule.Split(new[] { '\n' }, StringSplitOptions.RemoveEmptyEntries).FirstOrDefault();
-                string date = string.Empty;
-                if (!string.IsNullOrEmpty(dateLine))
+                // Получаем путь к предыдущему расписанию для этой группы
+                var previousSchedulePath = GetPreviousSchedulePath(chatId);
+                if (previousSchedulePath != null)
                 {
-                    var prefix = $"Расписание для группы {groupName} на";
-                    if (dateLine.StartsWith(prefix))
+                    // Получаем расписание для выбранной группы
+                    var schedule = GetGroupSchedule(previousSchedulePath, groupName);
+                    var format = formatManager.GetFormat(chatId);
+
+                    if (string.IsNullOrEmpty(schedule))
                     {
-                        date = dateLine.Replace(prefix, "").Replace("(четверг):", "").Trim();
+                        await botClient.SendTextMessageAsync(chatId, "Расписание для этой группы не найдено.", cancellationToken: cancellationToken);
+                        return;
                     }
-                }
 
-                if (format == "photo")
-                {
-                    // Конвертация расписания в изображение
-                    var imagePath = Path.Combine(Path.GetTempPath(), $"{chatId}_{groupName}_schedule.png");
-                    Converter.ConvertScheduleToImage(groupName, schedule, imagePath);
+                    // Отправка расписания в нужном формате
+                    if (format == "photo")
+                    {
+                        var imagePath = Path.Combine(Path.GetTempPath(), $"{chatId}_{groupName}_schedule.png");
+                        Converter.ConvertScheduleToImage(groupName, schedule, imagePath);
 
-                    // Отправка изображения с датой в заголовке
-                    await using var stream = new FileStream(imagePath, FileMode.Open, FileAccess.Read);
-                    await botClient.SendPhotoAsync(
-                        chatId,
-                        photo: stream,
-                        caption: $"Расписание для группы {groupName} на {date}",
-                        cancellationToken: cancellationToken
-                    );
+                        await using var stream = new FileStream(imagePath, FileMode.Open, FileAccess.Read);
+                        await botClient.SendPhotoAsync(
+                            chatId,
+                            photo: stream,
+                            caption: $"Предыдущее расписание для группы {groupName}",
+                            cancellationToken: cancellationToken
+                        );
+                    }
+                    else
+                    {
+                        await botClient.SendTextMessageAsync(chatId, schedule, cancellationToken: cancellationToken);
+                    }
                 }
                 else
                 {
-                    await botClient.SendTextMessageAsync(chatId, schedule, cancellationToken: cancellationToken);
+                    await botClient.SendTextMessageAsync(chatId, "Предыдущее расписание для группы не найдено.", cancellationToken: cancellationToken);
                 }
             }
-
-
             else if (callbackQuery.Data.StartsWith("teacher_"))
             {
                 var teacherName = callbackQuery.Data.Replace("teacher_", "");
                 if (subscriptionManager.TryGetState(chatId, out var state) && state == "choose_teacher")
                 {
                     subscriptionManager.AddSubscription(chatId, "teacher", teacherName);
-                    await botClient.SendTextMessageAsync(chatId, $"Вы подписались на рассылку для преподавателя {teacherName}.", cancellationToken: cancellationToken);
+                    await botClient.SendTextMessageAsync(chatId, $"Вы выбрали расписание для преподавателя {teacherName}.", cancellationToken: cancellationToken);
                     subscriptionManager.ClearState(chatId);
                 }
 
-                var schedule = GetTeacherSchedule(currentFilePath, teacherName);
-                var format = formatManager.GetFormat(chatId);
-
-                // Извлечение даты из текста расписания
-                var dateLine = schedule.Split(new[] { '\n' }, StringSplitOptions.RemoveEmptyEntries).FirstOrDefault();
-                string date = string.Empty;
-                if (!string.IsNullOrEmpty(dateLine))
+                // Получаем путь к предыдущему расписанию для этого преподавателя
+                var previousSchedulePath = GetPreviousSchedulePath(chatId);
+                if (previousSchedulePath != null)
                 {
-                    var prefix = $"Расписание для преподавателя {teacherName} на";
-                    if (dateLine.StartsWith(prefix))
+                    // Получаем расписание для выбранного преподавателя
+                    var schedule = GetTeacherSchedule(previousSchedulePath, teacherName);
+                    var format = formatManager.GetFormat(chatId);
+
+                    if (string.IsNullOrEmpty(schedule))
                     {
-                        date = dateLine.Replace(prefix, "").Trim();
+                        await botClient.SendTextMessageAsync(chatId, "Расписание для этого преподавателя не найдено.", cancellationToken: cancellationToken);
+                        return;
                     }
-                }
 
-                if (format == "photo")
-                {
-                    // Конвертация расписания в изображение
-                    var imagePath = Path.Combine(Path.GetTempPath(), $"{chatId}_{teacherName}_schedule.png");
-                    Converter.ConvertScheduleToImage(teacherName, schedule, imagePath);
+                    // Отправка расписания в нужном формате
+                    if (format == "photo")
+                    {
+                        var imagePath = Path.Combine(Path.GetTempPath(), $"{chatId}_{teacherName}_schedule.png");
+                        Converter.ConvertScheduleToImage(teacherName, schedule, imagePath);
 
-                    // Отправка изображения с датой в заголовке
-                    await using var stream = new FileStream(imagePath, FileMode.Open, FileAccess.Read);
-                    await botClient.SendPhotoAsync(
-                        chatId,
-                        photo: stream,
-                        caption: $"Расписание для преподавателя {teacherName} на {date}",
-                        cancellationToken: cancellationToken
-                    );
+                        await using var stream = new FileStream(imagePath, FileMode.Open, FileAccess.Read);
+                        await botClient.SendPhotoAsync(
+                            chatId,
+                            photo: stream,
+                            caption: $"Предыдущее расписание для преподавателя {teacherName}",
+                            cancellationToken: cancellationToken
+                        );
+                    }
+                    else
+                    {
+                        await botClient.SendTextMessageAsync(chatId, schedule, cancellationToken: cancellationToken);
+                    }
                 }
                 else
                 {
-                    await botClient.SendTextMessageAsync(chatId, schedule, cancellationToken: cancellationToken);
+                    await botClient.SendTextMessageAsync(chatId, "Предыдущее расписание для преподавателя не найдено.", cancellationToken: cancellationToken);
                 }
             }
+
 
         }
     }
@@ -903,6 +920,72 @@ class Program
             _ => null
         };
     }
+    private static string GetPreviousSchedulePath(long chatId)
+    {
+        // Получаем имя текущего файла из currentFilePath
+        var currentFileName = Path.GetFileName(currentFilePath); // например: "Schedule_13_12_2024.xlsx"
+
+        // Извлекаем дату из имени файла: начиная с 9-го символа (после "Schedule_")
+        var currentDateString = currentFileName.Substring(9, 10).Trim(); // "13_12_2024"
+
+        // Преобразуем строку в DateTime
+        DateTime currentFileDate;
+        if (!DateTime.TryParseExact(currentDateString, "dd_MM_yyyy", null, System.Globalization.DateTimeStyles.None, out currentFileDate))
+        {
+            return null; // Если дата в имени файла невалидна, возвращаем null
+        }
+
+        // Получаем список всех файлов в папке, которые соответствуют формату расписания
+        var scheduleFiles = Directory.GetFiles(directoryPath, "Schedule_*.xlsx");
+
+        if (scheduleFiles.Length == 0)
+        {
+            return null; // Если нет файлов, возвращаем null
+        }
+
+        // Фильтруем файлы, оставляя только те, чьи даты раньше текущей
+        var validFiles = scheduleFiles
+            .Where(file => DateTime.TryParseExact(Path.GetFileName(file).Substring(9, 10), "dd_MM_yyyy", null, System.Globalization.DateTimeStyles.None, out DateTime fileDate)
+                          && fileDate < currentFileDate) // Только те файлы, чьи даты меньше текущей
+            .ToList();
+
+        if (validFiles.Count == 0)
+        {
+            return null; // Если нет файлов с датой раньше текущей, возвращаем null
+        }
+
+        // Сортировка по дате (по убыванию), чтобы выбрать последний файл с датой раньше текущей
+        var latestFile = validFiles
+            .OrderByDescending(file => DateTime.ParseExact(Path.GetFileName(file).Substring(9, 10), "dd_MM_yyyy", null)) // Сортируем по дате
+            .First(); // Берем последний файл
+
+        return latestFile; // Возвращаем путь к найденному файлу
+    }
+
+    private static async Task SendScheduleAsText(long chatId, string filePath, CancellationToken cancellationToken)
+    {
+        var schedule = await System.IO.File.ReadAllTextAsync(filePath, cancellationToken);
+        await botClient.SendTextMessageAsync(chatId, schedule, cancellationToken: cancellationToken);
+    }
+
+    private static async Task SendScheduleAsImage(long chatId, string filePath, CancellationToken cancellationToken)
+    {
+        var groupName = "Группа"; // Здесь нужно определить, какую группу использовать (например, если расписание относится к группе)
+
+        // Конвертируем текст расписания в изображение
+        string outputImagePath = Path.Combine(Path.GetTempPath(), $"{chatId}_previous_schedule.png");
+        var scheduleText = await System.IO.File.ReadAllTextAsync(filePath, cancellationToken);
+
+        // Конвертация расписания в изображение
+        Converter.ConvertScheduleToImage(groupName, scheduleText, outputImagePath);
+
+        // Отправка изображения
+        await using var stream = new FileStream(outputImagePath, FileMode.Open, FileAccess.Read);
+        await botClient.SendPhotoAsync(chatId, photo: stream, caption: "Предыдущее расписание", cancellationToken: cancellationToken);
+    }
+
+
+
 
 
 
