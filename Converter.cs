@@ -1,4 +1,4 @@
-﻿using SkiaSharp;
+using SkiaSharp;
 
 namespace SerpThunder
 {
@@ -99,7 +99,7 @@ namespace SerpThunder
 
             int leftCellWidth = 35;
             int rightCellWidth = 140;
-            int cellHeight = 250;
+            int cellHeight = 300;
             int headerHeight = 50;
             int imageWidth = leftCellWidth + rightCellWidth;
             int imageHeight = headerHeight + cellHeight * 5;
