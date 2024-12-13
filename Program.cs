@@ -265,11 +265,11 @@ class Program
 
 
                 case "choose_group":
-                    await SendGroupList(chatId, cancellationToken, currentFilePath);
+                    await SendGroupListStart(chatId, cancellationToken, currentFilePath);
                     break;
 
                 case "choose_teacher":
-                    await SendTeacherList(chatId, cancellationToken, currentFilePath);
+                    await SendTeacherListStart(chatId, cancellationToken, currentFilePath);
                     break;
 
                 case "/group":
@@ -338,18 +338,40 @@ class Program
             if (callbackQuery.Data == "choose_group")
             {
                 subscriptionManager.SetState(chatId, "choose_group");
-                await SendGroupList(chatId, cancellationToken, currentFilePath); // Отправляем список групп
+                await SendGroupListStart(chatId, cancellationToken, currentFilePath); // Отправляем список групп
             }
             else if (callbackQuery.Data == "choose_teacher")
             {
                 subscriptionManager.SetState(chatId, "choose_teacher");
-                await SendTeacherList(chatId, cancellationToken, currentFilePath); // Отправляем список преподавателей
+                await SendTeacherListStart(chatId, cancellationToken, currentFilePath); // Отправляем список преподавателей
             }
+            else if (callbackQuery.Data.StartsWith("groupstart_"))
+            {
+                var groupName = callbackQuery.Data.Replace("groupstart_", "");
+
+                // Добавляем пользователя в подписку на группу
+                subscriptionManager.AddSubscription(chatId, "group", groupName);
+                await botClient.SendTextMessageAsync(chatId, $"Вы успешно подписаны на рассылку для группы {groupName}.", cancellationToken: cancellationToken);
+
+                // Завершаем настройку и очищаем состояние
+                subscriptionManager.ClearState(chatId);
+            }
+            else if (callbackQuery.Data.StartsWith("teacherstart_"))
+            {
+                var teacherName = callbackQuery.Data.Replace("teacherstart_", "");
+
+                // Добавляем пользователя в подписку на преподавателя
+                subscriptionManager.AddSubscription(chatId, "teacher", teacherName);
+                await botClient.SendTextMessageAsync(chatId, $"Вы успешно подписаны на рассылку для преподавателя {teacherName}.", cancellationToken: cancellationToken);
+
+                // Завершаем настройку и очищаем состояние
+                subscriptionManager.ClearState(chatId);
+            }
+
             else if (callbackQuery.Data == "skip_subscription")
             {
                 await botClient.SendTextMessageAsync(chatId, "Вы выбрали пропустить рассылку. Вы всегда можете вернуться к настройке рассылки через /start.", cancellationToken: cancellationToken);
-                subscriptionManager.RemoveSubscription(chatId); // Убираем рассылку
-                formatManager.RemoveFormat(chatId); // Убираем формат
+                subscriptionManager.RemoveSubscription(chatId); 
             }
             else if (callbackQuery.Data == "photo_schedule")
             {
@@ -541,20 +563,6 @@ class Program
     
 
 
-
-    private static void RemoveSubscription(long chatId)
-    {
-        // Логика удаления подписки из текстового файла или базы данных
-        var subscriptionFilePath = "subscriptions.txt";
-
-        if (System.IO.File.Exists(subscriptionFilePath))
-        {
-            var lines = System.IO.File.ReadAllLines(subscriptionFilePath).Where(line => !line.StartsWith(chatId.ToString())).ToList();
-            System.IO.File.WriteAllLines(subscriptionFilePath, lines);
-        }
-    }
-
-
     private static Task HandleErrorAsync(ITelegramBotClient botClient, Exception exception, CancellationToken cancellationToken)
     {
         Console.WriteLine($"Ошибка: {exception.Message}");
@@ -566,6 +574,18 @@ class Program
         var groups = GetGroups(filePath);
         var keyboardButtons = groups
             .Select(group => InlineKeyboardButton.WithCallbackData(group, $"group_{group}"))
+            .Chunk(3)
+            .Select(chunk => chunk.ToArray())
+            .ToArray();
+
+        var keyboard = new InlineKeyboardMarkup(keyboardButtons);
+        await botClient.SendTextMessageAsync(chatId, "Выберите группу:", replyMarkup: keyboard, cancellationToken: cancellationToken);
+    }
+    private static async Task SendGroupListStart(long chatId, CancellationToken cancellationToken, string filePath)
+    {
+        var groups = GetGroups(filePath);
+        var keyboardButtons = groups
+            .Select(group => InlineKeyboardButton.WithCallbackData(group, $"groupstart_{group}"))
             .Chunk(3)
             .Select(chunk => chunk.ToArray())
             .ToArray();
@@ -591,6 +611,19 @@ class Program
         var teachers = GetTeachers(filePath);
         var keyboardButtons = teachers
             .Select(teacher => InlineKeyboardButton.WithCallbackData(teacher, $"teacher_{teacher}"))
+            .Chunk(3)
+            .Select(chunk => chunk.ToArray())
+            .ToArray();
+
+        var keyboard = new InlineKeyboardMarkup(keyboardButtons);
+
+        await botClient.SendTextMessageAsync(chatId, "Выберите преподавателя:", replyMarkup: keyboard, cancellationToken: cancellationToken);
+    }
+    private static async Task SendTeacherListStart(long chatId, CancellationToken cancellationToken, string filePath)
+    {
+        var teachers = GetTeachers(filePath);
+        var keyboardButtons = teachers
+            .Select(teacher => InlineKeyboardButton.WithCallbackData(teacher, $"teacherstart_{teacher}"))
             .Chunk(3)
             .Select(chunk => chunk.ToArray())
             .ToArray();
@@ -1087,11 +1120,4 @@ class Program
         await using var stream = new FileStream(outputImagePath, FileMode.Open, FileAccess.Read);
         await botClient.SendPhotoAsync(chatId, photo: stream, caption: "Предыдущее расписание", cancellationToken: cancellationToken);
     }
-
-
-
-
-
-
-
 }
