@@ -1,4 +1,5 @@
-﻿using SkiaSharp;
+using OfficeOpenXml;
+using SkiaSharp;
 
 namespace SerpThunder
 {
@@ -10,7 +11,7 @@ namespace SerpThunder
             TextSize = 14,
             IsAntialias = true,
             TextAlign = SKTextAlign.Left,
-            Typeface = SKTypeface.FromFamilyName("Ariel", SKFontStyle.Bold)
+            Typeface = SKTypeface.FromFamilyName("Ariel")
         };
 
         public static SKPaint boldTextPaint = new SKPaint
@@ -33,7 +34,7 @@ namespace SerpThunder
         public static SKPaint TopTextPaint = new SKPaint
         {
             Color = SKColors.Black,
-            TextSize = 28,
+            TextSize = 26,
             IsAntialias = true,
             TextAlign = SKTextAlign.Left,
             Typeface = SKTypeface.FromFamilyName("Ariel", SKFontStyle.Bold)
@@ -102,16 +103,28 @@ namespace SerpThunder
                 .Trim();
         }
 
-        public static void ConvertScheduleToImage(string groupName, string scheduleText, string outputPath)
+        public static void ConvertScheduleToImage(string groupName, string scheduleText, string outputPath, string filePath)
         {
+            // Читаем дату и день недели из Excel
+            using var package = new ExcelPackage(new FileInfo(filePath));
+            var worksheet = package.Workbook.Worksheets.First();
+
+            string dateRaw = worksheet.Cells[1, 2].Text.Trim();
+            string prefix = "Расписание на ";
+            string dateOnly = dateRaw.StartsWith(prefix) ? dateRaw.Substring(prefix.Length) : dateRaw;
+
+            string dayOfWeek = worksheet.Cells[1, 16].Text.Trim();
+
             var scheduleMatrix = ParseScheduleToMatrix(scheduleText, groupName);
 
             int leftCellWidth = 35;
             int rightCellWidth = 140;
             int cellHeight = 300;
             int headerHeight = 25;
+            int dateHeight = 30; // Высота строки с датой
+            int dayOfWeekHeight = 25; // Высота строки с днём недели
             int imageWidth = leftCellWidth + rightCellWidth;
-            int imageHeight = headerHeight + cellHeight * 5;
+            int imageHeight = dateHeight + dayOfWeekHeight + headerHeight + cellHeight * 5;
 
             using var surface = SKSurface.Create(new SKImageInfo(imageWidth, imageHeight));
             var canvas = surface.Canvas;
@@ -122,20 +135,26 @@ namespace SerpThunder
                 Style = SKPaintStyle.Stroke,
                 Color = SKColors.Black,
                 StrokeWidth = 2
-            };            
+            };
 
-            // Header (Заголовок)
-            var headerRect = new SKRect(0, 0, imageWidth, headerHeight);
+            // Рисуем дату
+            var dateRect = new SKRect(-17, 0, imageWidth, dateHeight);
+            DrawHeaderCenteredText(canvas, dateOnly, dateRect, boldTextPaint);
+
+            // Рисуем день недели
+            var dayOfWeekRect = new SKRect(-17, dateHeight, imageWidth, dateHeight + dayOfWeekHeight);
+            DrawHeaderCenteredText(canvas, dayOfWeek, dayOfWeekRect, textPaint);
+
+            // Рисуем заголовок (группу)
+            var headerRect = new SKRect(0, dateHeight + dayOfWeekHeight, imageWidth, dateHeight + dayOfWeekHeight + headerHeight);
             canvas.DrawRect(headerRect, pen);
-
-            // Центрирование заголовка
             DrawHeaderCenteredText(canvas, groupName, headerRect, boldTextPaint);
 
-            canvas.DrawLine(leftCellWidth, 0, leftCellWidth, headerHeight, pen);
+            canvas.DrawLine(leftCellWidth, dateHeight + dayOfWeekHeight, leftCellWidth, dateHeight + dayOfWeekHeight + headerHeight, pen);
 
             for (int i = 0; i < 5; i++)
             {
-                float top = headerHeight + i * cellHeight;
+                float top = dateHeight + dayOfWeekHeight + headerHeight + i * cellHeight;
 
                 // Left cell
                 var leftRect = new SKRect(0, top, leftCellWidth, top + cellHeight);
@@ -201,6 +220,8 @@ namespace SerpThunder
             using var stream = File.OpenWrite(outputPath);
             data.SaveTo(stream);
         }
+
+
 
         private static List<string> FormatText(string text, SKPaint paint, float maxWidth)
         {
