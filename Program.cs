@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -135,7 +135,7 @@ class Program
                 {
                     // Генерация изображения расписания
                     var imagePath = Path.Combine(Path.GetTempPath(), $"{chatId}_{name}_schedule.png");
-                    Converter.ConvertScheduleToImage(name, message, imagePath);
+                    Converter.ConvertScheduleToImage(name, message, imagePath, currentFilePath);
 
                     // Отправка изображения
                     await using var stream = new FileStream(imagePath, FileMode.Open, FileAccess.Read);
@@ -410,7 +410,7 @@ class Program
                     if (format == "photo")
                     {
                         var imagePath = Path.Combine(Path.GetTempPath(), $"{chatId}_{groupName}_schedule.png");
-                        Converter.ConvertScheduleToImage(groupName, schedule, imagePath);
+                        Converter.ConvertScheduleToImage(groupName, schedule, imagePath, previousSchedulePath);
 
                         await using var stream = new FileStream(imagePath, FileMode.Open, FileAccess.Read);
                         await botClient.SendPhotoAsync(
@@ -451,7 +451,7 @@ class Program
                     if (format == "photo")
                     {
                         var imagePath = Path.Combine(Path.GetTempPath(), $"{chatId}_{teacherName}_schedule.png");
-                        Converter.ConvertScheduleToImage(teacherName, schedule, imagePath);
+                        Converter.ConvertScheduleToImage(teacherName, schedule, imagePath, previousSchedulePath);
 
                         await using var stream = new FileStream(imagePath, FileMode.Open, FileAccess.Read);
                         await botClient.SendPhotoAsync(
@@ -498,7 +498,7 @@ class Program
                 if (format == "photo")
                 {
                     var imagePath = Path.Combine(Path.GetTempPath(), $"{chatId}_{groupName}_schedule.png");
-                    Converter.ConvertScheduleToImage(groupName, schedule, imagePath);
+                    Converter.ConvertScheduleToImage(groupName, schedule, imagePath, currentFilePath);
 
                     await using var stream = new FileStream(imagePath, FileMode.Open, FileAccess.Read);
                     await botClient.SendPhotoAsync(
@@ -534,7 +534,7 @@ class Program
                 if (format == "photo")
                 {
                     var imagePath = Path.Combine(Path.GetTempPath(), $"{chatId}_{teacherName}_schedule.png");
-                    Converter.ConvertScheduleToImage(teacherName, schedule, imagePath);
+                    Converter.ConvertScheduleToImage(teacherName, schedule, imagePath, currentFilePath);
 
                     await using var stream = new FileStream(imagePath, FileMode.Open, FileAccess.Read);
                     await botClient.SendPhotoAsync(
@@ -1112,9 +1112,10 @@ class Program
         // Конвертируем текст расписания в изображение
         string outputImagePath = Path.Combine(Path.GetTempPath(), $"{chatId}_previous_schedule.png");
         var scheduleText = await System.IO.File.ReadAllTextAsync(filePath, cancellationToken);
+        var previousSchedulePath = GetPreviousSchedulePath(chatId);
 
         // Конвертация расписания в изображение
-        Converter.ConvertScheduleToImage(groupName, scheduleText, outputImagePath);
+        Converter.ConvertScheduleToImage(groupName, scheduleText, outputImagePath, previousSchedulePath);
 
         // Отправка изображения
         await using var stream = new FileStream(outputImagePath, FileMode.Open, FileAccess.Read);
