@@ -8,36 +8,40 @@ namespace SerpThunder
         public static SKPaint textPaint = new SKPaint
         {
             Color = SKColors.Black,
-            TextSize = 14,
+            TextSize = 28,
             IsAntialias = true,
             TextAlign = SKTextAlign.Left,
-            Typeface = SKTypeface.FromFamilyName("Ariel")
+            Typeface = SKTypeface.FromFamilyName("Ariel"),
+            SubpixelText = true
         };
 
         public static SKPaint boldTextPaint = new SKPaint
         {
             Color = SKColors.Black,
-            TextSize = 20,
+            TextSize = 40,
             IsAntialias = true,
             TextAlign = SKTextAlign.Left,
-            Typeface = SKTypeface.FromFamilyName("Ariel", SKFontStyle.Bold)
+            Typeface = SKTypeface.FromFamilyName("Ariel", SKFontStyle.Bold),
+            SubpixelText = true
         };
         public static SKPaint LeftTextPaint = new SKPaint
         {
             Color = SKColors.Black,
-            TextSize = 40,
+            TextSize = 80,
             IsAntialias = true,
             TextAlign = SKTextAlign.Left,
-            Typeface = SKTypeface.FromFamilyName("Ariel", SKFontStyle.Bold)
+            Typeface = SKTypeface.FromFamilyName("Ariel", SKFontStyle.Bold),
+            SubpixelText = true
         };
 
         public static SKPaint TopTextPaint = new SKPaint
         {
             Color = SKColors.Black,
-            TextSize = 26,
+            TextSize = 52,
             IsAntialias = true,
             TextAlign = SKTextAlign.Left,
-            Typeface = SKTypeface.FromFamilyName("Ariel", SKFontStyle.Bold)
+            Typeface = SKTypeface.FromFamilyName("Ariel", SKFontStyle.Bold),
+            SubpixelText = true
         };
         public static string[,] ParseScheduleToMatrix(string scheduleText, string groupName)
         {
@@ -117,12 +121,12 @@ namespace SerpThunder
 
             var scheduleMatrix = ParseScheduleToMatrix(scheduleText, groupName);
 
-            int leftCellWidth = 35;
-            int rightCellWidth = 140;
-            int cellHeight = 300;
-            int headerHeight = 25;
-            int dateHeight = 30; // Высота строки с датой
-            int dayOfWeekHeight = 25; // Высота строки с днём недели
+            int leftCellWidth = 35*2;
+            int rightCellWidth = 140*2;
+            int cellHeight = 300 * 2;
+            int headerHeight = 25 * 2;
+            int dateHeight = 30*2; // Высота строки с датой
+            int dayOfWeekHeight = 25 * 2; // Высота строки с днём недели
             int imageWidth = leftCellWidth + rightCellWidth;
             int imageHeight = dateHeight + dayOfWeekHeight + headerHeight + cellHeight * 5;
 
@@ -138,7 +142,7 @@ namespace SerpThunder
             };
 
             // Рисуем дату
-            var dateRect = new SKRect(-17, 0, imageWidth, dateHeight);
+            var dateRect = new SKRect(10, 0, imageWidth, dateHeight);
             DrawHeaderCenteredText(canvas, dateOnly, dateRect, boldTextPaint);
 
             // Рисуем день недели
