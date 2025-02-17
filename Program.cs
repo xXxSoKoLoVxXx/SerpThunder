@@ -14,6 +14,7 @@ using Telegram.Bot.Types.Enums;
 using Telegram.Bot.Types.ReplyMarkups;
 using System.Security.Cryptography;
 using SerpThunder;
+using System.Text;
 
 class Program
 {
@@ -345,7 +346,7 @@ class Program
                 subscriptionManager.SetState(chatId, "choose_teacher");
                 await SendTeacherListStart(chatId, cancellationToken, currentFilePath); // Отправляем список преподавателей
             }
-            else if (callbackQuery.Data.StartsWith("groupstart_"))
+            else if (callbackQuery.Data.StartsWith("gs_"))
             {
                 var groupName = callbackQuery.Data.Replace("groupstart_", "");
 
@@ -356,9 +357,9 @@ class Program
                 // Завершаем настройку и очищаем состояние
                 subscriptionManager.ClearState(chatId);
             }
-            else if (callbackQuery.Data.StartsWith("teacherstart_"))
+            else if (callbackQuery.Data.StartsWith("ts_"))
             {
-                var teacherName = callbackQuery.Data.Replace("teacherstart_", "");
+                var teacherName = callbackQuery.Data.Replace("ts_", "");
 
                 // Добавляем пользователя в подписку на преподавателя
                 subscriptionManager.AddSubscription(chatId, "teacher", teacherName);
@@ -389,9 +390,9 @@ class Program
                 formatManager.RemoveFormat(chatId);
                 await botClient.SendTextMessageAsync(chatId, "Рассылка отключена.", cancellationToken: cancellationToken);
             }
-            else if (callbackQuery.Data.StartsWith("group_old_"))
+            else if (callbackQuery.Data.StartsWith("g_o_"))
             {
-                var groupName = callbackQuery.Data.Replace("group_old_", "");
+                var groupName = callbackQuery.Data.Replace("g_o_", "");
 
                 // Получаем путь к старому расписанию для этой группы
                 var previousSchedulePath = GetPreviousSchedulePath(chatId);
@@ -430,9 +431,9 @@ class Program
                     await botClient.SendTextMessageAsync(chatId, "Предыдущее расписание для группы не найдено.", cancellationToken: cancellationToken);
                 }
             }
-            else if (callbackQuery.Data.StartsWith("teacher_old_"))
+            else if (callbackQuery.Data.StartsWith("t_o_"))
             {
-                var teacherName = callbackQuery.Data.Replace("teacher_old_", "");
+                var teacherName = callbackQuery.Data.Replace("t_o_", "");
 
                 // Получаем путь к старому расписанию для этого преподавателя
                 var previousSchedulePath = GetPreviousSchedulePath(chatId);
@@ -471,9 +472,9 @@ class Program
                     await botClient.SendTextMessageAsync(chatId, "Предыдущее расписание для преподавателя не найдено.", cancellationToken: cancellationToken);
                 }
             }
-            else if (callbackQuery.Data.StartsWith("group_"))
+            else if (callbackQuery.Data.StartsWith("g_"))
             {
-                var groupName = callbackQuery.Data.Replace("group_", "");
+                var groupName = callbackQuery.Data.Replace("g_", "");
                 var currentFileName = Path.GetFileName(currentFilePath); // например: "Schedule_13_12_2024.xlsx"
 
                 // Извлекаем дату из имени файла: начиная с 9-го символа (после "Schedule_")
@@ -513,9 +514,9 @@ class Program
                     await botClient.SendTextMessageAsync(chatId, schedule, cancellationToken: cancellationToken);
                 }
             }
-            else if (callbackQuery.Data.StartsWith("teacher_"))
+            else if (callbackQuery.Data.StartsWith("t_"))
             {
-                var teacherName = callbackQuery.Data.Replace("teacher_", "");
+                var teacherName = callbackQuery.Data.Replace("t_", "");
                 var currentFileName = Path.GetFileName(currentFilePath); // например: "Schedule_13_12_2024.xlsx"
                 var currentDateString = currentFileName.Substring(9, 10).Trim(); // "13_12_2024"
                 DateTime currentFileDate = DateTime.ParseExact(currentDateString, "dd_MM_yyyy", null, System.Globalization.DateTimeStyles.None);
@@ -549,20 +550,8 @@ class Program
                     await botClient.SendTextMessageAsync(chatId, schedule, cancellationToken: cancellationToken);
                 }
             }
-            
-
-
-
-
-
-
-
-
         }
     }
-    
-
-
     private static Task HandleErrorAsync(ITelegramBotClient botClient, Exception exception, CancellationToken cancellationToken)
     {
         Console.WriteLine($"Ошибка: {exception.Message}");
@@ -573,7 +562,7 @@ class Program
     {
         var groups = GetGroups(filePath);
         var keyboardButtons = groups
-            .Select(group => InlineKeyboardButton.WithCallbackData(group, $"group_{group}"))
+            .Select(group => InlineKeyboardButton.WithCallbackData(group, $"g_{group}"))
             .Chunk(3)
             .Select(chunk => chunk.ToArray())
             .ToArray();
@@ -585,7 +574,7 @@ class Program
     {
         var groups = GetGroups(filePath);
         var keyboardButtons = groups
-            .Select(group => InlineKeyboardButton.WithCallbackData(group, $"groupstart_{group}"))
+            .Select(group => InlineKeyboardButton.WithCallbackData(group, $"gs_{group}"))
             .Chunk(3)
             .Select(chunk => chunk.ToArray())
             .ToArray();
@@ -597,7 +586,7 @@ class Program
     {
         var groups = GetGroups(filePath);
         var keyboardButtons = groups
-            .Select(group => InlineKeyboardButton.WithCallbackData(group, $"group_old_{group}"))
+            .Select(group => InlineKeyboardButton.WithCallbackData(group, $"g_o_{group}"))
             .Chunk(3)
             .Select(chunk => chunk.ToArray())
             .ToArray();
@@ -610,7 +599,7 @@ class Program
     {
         var teachers = GetTeachers(filePath);
         var keyboardButtons = teachers
-            .Select(teacher => InlineKeyboardButton.WithCallbackData(teacher, $"teacher_{teacher}"))
+            .Select(teacher => InlineKeyboardButton.WithCallbackData(teacher, $"t_{teacher}"))
             .Chunk(3)
             .Select(chunk => chunk.ToArray())
             .ToArray();
@@ -623,7 +612,7 @@ class Program
     {
         var teachers = GetTeachers(filePath);
         var keyboardButtons = teachers
-            .Select(teacher => InlineKeyboardButton.WithCallbackData(teacher, $"teacherstart_{teacher}"))
+            .Select(teacher => InlineKeyboardButton.WithCallbackData(teacher, $"ts_{teacher}"))
             .Chunk(3)
             .Select(chunk => chunk.ToArray())
             .ToArray();
@@ -636,7 +625,7 @@ class Program
     {
         var teachers = GetTeachers(filePath);
         var keyboardButtons = teachers
-            .Select(teacher => InlineKeyboardButton.WithCallbackData(teacher, $"teacher_old_{teacher}"))
+            .Select(teacher => InlineKeyboardButton.WithCallbackData(teacher, $"t_o_{teacher}"))
             .Chunk(3)
             .Select(chunk => chunk.ToArray())
             .ToArray();
@@ -686,14 +675,17 @@ class Program
                 if (parts.Length >= 3)
                 {
                     var teacher = parts[2];
-                    if (!string.IsNullOrEmpty(teacher))
-                    {
+                    if (!string.IsNullOrEmpty(teacher))                    {
+                        // Обрезаем лишние пробелы
+                        teacher = teacher.Trim();
+                        // Удаляем управляющие символы (например, переносы строк, BOM и т.п.)
+                        teacher = new string(teacher.Where(c => !char.IsControl(c)).ToArray());
                         teachers.Add(teacher);
                     }
+
                 }
             }
         }
-
         return teachers.ToList();
     }
 
