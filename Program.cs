@@ -127,7 +127,14 @@ class Program
                 if (format == "photo")
                 {
                     var imagePath = Path.Combine(Path.GetTempPath(), $"{chatId}_{name}_schedule.png");
-                    Converter.ConvertScheduleToImage(name, message, imagePath, currentFilePath);
+                    
+                    // Создаем временный Excel файл с правильной датой для Converter
+                    var tempExcelPath = await CreateTempExcelForConverter(currentFilePath, name, message);
+                    
+                    Converter.ConvertScheduleToImage(name, message, imagePath, tempExcelPath);
+
+                    // Удаляем временный файл
+                    try { System.IO.File.Delete(tempExcelPath); } catch { }
 
                     await using var stream = new FileStream(imagePath, FileMode.Open, FileAccess.Read);
                     await botClient.SendPhotoAsync(
@@ -264,7 +271,14 @@ class Program
                 if (format == "photo")
                 {
                     var imagePath = Path.Combine(Path.GetTempPath(), $"{chatId}_{groupName}_schedule.png");
-                    Converter.ConvertScheduleToImage(groupName, schedule, imagePath, currentFilePath);
+                    
+                    // Создаем временный Excel файл с правильной датой для Converter
+                    var tempExcelPath = await CreateTempExcelForConverter(currentFilePath, groupName, schedule);
+                    
+                    Converter.ConvertScheduleToImage(groupName, schedule, imagePath, tempExcelPath);
+
+                    // Удаляем временный файл
+                    try { System.IO.File.Delete(tempExcelPath); } catch { }
 
                     await using var stream = new FileStream(imagePath, FileMode.Open, FileAccess.Read);
                     await botClient.SendPhotoAsync(
@@ -297,7 +311,14 @@ class Program
                     if (format == "photo")
                     {
                         var imagePath = Path.Combine(Path.GetTempPath(), $"{chatId}_{groupName}_old_schedule.png");
-                        Converter.ConvertScheduleToImage(groupName, schedule, imagePath, previousSchedulePath);
+                        
+                        // Создаем временный Excel файл с правильной датой для Converter
+                        var tempExcelPath = await CreateTempExcelForConverter(previousSchedulePath, groupName, schedule);
+                        
+                        Converter.ConvertScheduleToImage(groupName, schedule, imagePath, tempExcelPath);
+
+                        // Удаляем временный файл
+                        try { System.IO.File.Delete(tempExcelPath); } catch { }
 
                         await using var stream = new FileStream(imagePath, FileMode.Open, FileAccess.Read);
                         await botClient.SendPhotoAsync(
@@ -506,6 +527,81 @@ class Program
         return blocks;
     }
 
+    private static string ParseDateFromCell(ExcelWorksheet worksheet, string cellAddress)
+    {
+        string cellText = "";
+        
+        if (cellAddress == "A1")
+            cellText = worksheet.Cells[1, 1].Text?.Trim() ?? "";
+        else if (cellAddress == "A8")
+            cellText = worksheet.Cells[8, 1].Text?.Trim() ?? "";
+
+        if (string.IsNullOrEmpty(cellText))
+            return "";
+
+        // Парсим дату из текста вида "РАСПИСАНИЕ ЗАНЯТИЙ НА 11 СЕНТЯБРЯ, ЧЕТВЕРГ"
+        try
+        {
+            // Убираем префикс "РАСПИСАНИЕ ЗАНЯТИЙ НА "
+            string datePattern = "РАСПИСАНИЕ ЗАНЯТИЙ НА ";
+            if (cellText.StartsWith(datePattern, StringComparison.OrdinalIgnoreCase))
+            {
+                cellText = cellText.Substring(datePattern.Length).Trim();
+            }
+
+            // Разделяем по запятой, чтобы отделить дату от дня недели
+            var parts = cellText.Split(',');
+            if (parts.Length >= 1)
+            {
+                string datePart = parts[0].Trim(); // "11 СЕНТЯБРЯ"
+                string dayOfWeek = parts.Length > 1 ? parts[1].Trim() : ""; // "ЧЕТВЕРГ"
+
+                // Преобразуем дату в более читаемый формат
+                var dateParts = datePart.Split(' ');
+                if (dateParts.Length >= 2)
+                {
+                    string day = dateParts[0];
+                    string month = dateParts[1].ToLower();
+                    
+                    // Преобразуем название месяца
+                    string monthName = month switch
+                    {
+                        "января" => "января",
+                        "февраля" => "февраля", 
+                        "марта" => "марта",
+                        "апреля" => "апреля",
+                        "мая" => "мая",
+                        "июня" => "июня",
+                        "июля" => "июля",
+                        "августа" => "августа",
+                        "сентября" => "сентября",
+                        "октября" => "октября",
+                        "ноября" => "ноября",
+                        "декабря" => "декабря",
+                        _ => month
+                    };
+
+                    if (!string.IsNullOrEmpty(dayOfWeek))
+                    {
+                        return $"{day} {monthName}, {dayOfWeek.ToLower()}";
+                    }
+                    else
+                    {
+                        return $"{day} {monthName}";
+                    }
+                }
+            }
+
+            // Если не удалось распарсить, возвращаем оригинальный текст
+            return cellText;
+        }
+        catch
+        {
+            // В случае ошибки возвращаем оригинальный текст
+            return cellText;
+        }
+    }
+
     private static string ParseScheduleBlock(ExcelWorksheet worksheet, ScheduleBlock block, string groupName)
     {
         // Находим колонку группы
@@ -524,12 +620,8 @@ class Program
 
         var schedule = new List<string>();
 
-        // Добавляем заголовок с датой
-        string dateText = "";
-        if (block.DateCell == "A1")
-            dateText = worksheet.Cells[1, 1].Text?.Trim() ?? "";
-        else if (block.DateCell == "A8")
-            dateText = worksheet.Cells[8, 1].Text?.Trim() ?? "";
+        // Добавляем заголовок с распарсенной датой
+        string dateText = ParseDateFromCell(worksheet, block.DateCell);
 
         schedule.Add($"Расписание для группы {groupName}");
         if (!string.IsNullOrEmpty(dateText))
@@ -634,15 +726,35 @@ class Program
                     var worksheet = package.Workbook.Worksheets.FirstOrDefault();
                     if (worksheet != null)
                     {
-                        var dateCell = worksheet.Cells["A1"].Text?.Trim() ?? "";
-                        if (string.IsNullOrEmpty(dateCell))
-                            dateCell = worksheet.Cells["B1"].Text?.Trim() ?? "";
-
-                        if (!string.IsNullOrEmpty(dateCell))
+                        // Пробуем извлечь дату из ячейки A1
+                        string dateText = ParseDateFromCell(worksheet, "A1");
+                        
+                        if (!string.IsNullOrEmpty(dateText))
                         {
-                            fileName = $"Schedule_{DateTime.Now:dd_MM_yyyy_HH_mm}.xlsx";
+                            // Пытаемся извлечь дату для имени файла
+                            try
+                            {
+                                var parts = dateText.Split(new[] { ' ', ',' }, StringSplitOptions.RemoveEmptyEntries);
+                                if (parts.Length >= 2)
+                                {
+                                    string day = parts[0];
+                                    string month = parts[1];
+                                    
+                                    string monthNumber = GetMonthNumber(month);
+                                    if (monthNumber != null)
+                                    {
+                                        string year = DateTime.Now.Year.ToString();
+                                        fileName = $"Schedule_{day.PadLeft(2, '0')}_{monthNumber}_{year}.xlsx";
+                                    }
+                                }
+                            }
+                            catch
+                            {
+                                // Если не удалось распарсить дату, используем текущую дату
+                            }
                         }
-                        else
+                        
+                        if (string.IsNullOrEmpty(fileName))
                         {
                             fileName = $"Schedule_{DateTime.Now:dd_MM_yyyy_HH_mm}.xlsx";
                         }
@@ -671,6 +783,97 @@ class Program
             Console.WriteLine($"Ошибка при загрузке файла: {ex.Message}");
             throw;
         }
+    }
+
+    // Создает временный Excel файл с правильной датой для класса Converter
+    private static async Task<string> CreateTempExcelForConverter(string originalFilePath, string groupName, string scheduleText)
+    {
+        var tempFilePath = Path.Combine(Path.GetTempPath(), $"temp_converter_{Guid.NewGuid()}.xlsx");
+        
+        try
+        {
+            using var originalPackage = new ExcelPackage(new FileInfo(originalFilePath));
+            using var tempPackage = new ExcelPackage();
+            
+            var originalWorksheet = originalPackage.Workbook.Worksheets.First();
+            var tempWorksheet = tempPackage.Workbook.Worksheets.Add("Schedule");
+
+            // Извлекаем дату из текста расписания
+            string dateText = "";
+            var lines = scheduleText.Split('\n');
+            
+            for (int i = 0; i < Math.Min(lines.Length, 3); i++)
+            {
+                var line = lines[i].Trim();
+                if (!line.StartsWith("Расписание для группы") && !string.IsNullOrEmpty(line))
+                {
+                    dateText = line;
+                    break;
+                }
+            }
+
+            // Если дата не найдена в тексте, ищем в оригинальном Excel
+            if (string.IsNullOrEmpty(dateText))
+            {
+                dateText = ParseDateFromCell(originalWorksheet, "A1");
+                if (string.IsNullOrEmpty(dateText))
+                {
+                    dateText = ParseDateFromCell(originalWorksheet, "A8");
+                }
+            }
+
+            // Устанавливаем дату в формате, который ожидает Converter
+            // B1 (ячейка [1,2]) - дата в формате "Расписание на [дата]"
+            if (!string.IsNullOrEmpty(dateText))
+            {
+                // Убираем день недели для ячейки B1
+                var dateParts = dateText.Split(',');
+                string dateOnly = dateParts[0].Trim();
+                
+                tempWorksheet.Cells[1, 2].Value = $"Расписание на {dateOnly}";
+                
+                // P1 (ячейка [1,16]) - день недели
+                if (dateParts.Length > 1)
+                {
+                    tempWorksheet.Cells[1, 16].Value = dateParts[1].Trim();
+                }
+            }
+            else
+            {
+                tempWorksheet.Cells[1, 2].Value = "Расписание";
+            }
+
+            // Сохраняем временный файл
+            tempPackage.SaveAs(new FileInfo(tempFilePath));
+            return tempFilePath;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Ошибка при создании временного файла: {ex.Message}");
+            // В случае ошибки возвращаем оригинальный файл
+            return originalFilePath;
+        }
+    }
+
+    // Метод для преобразования названия месяца в номер
+    private static string GetMonthNumber(string monthName)
+    {
+        return monthName.ToLower() switch
+        {
+            "января" => "01",
+            "февраля" => "02", 
+            "марта" => "03",
+            "апреля" => "04",
+            "мая" => "05",
+            "июня" => "06",
+            "июля" => "07",
+            "августа" => "08",
+            "сентября" => "09",
+            "октября" => "10",
+            "ноября" => "11",
+            "декабря" => "12",
+            _ => null
+        };
     }
 
     private static string GetPreviousSchedulePath(long chatId)
