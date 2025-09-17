@@ -143,7 +143,7 @@ namespace SerpThunder
 
             // Рисуем дату
             var dateRect = new SKRect(10, 0, imageWidth, dateHeight);
-            DrawHeaderCenteredText(canvas, dateOnly, dateRect, boldTextPaint);
+            DrawDateCenteredText(canvas, dateOnly, dateRect, boldTextPaint);
 
             // Рисуем день недели
             var dayOfWeekRect = new SKRect(-17, dateHeight, imageWidth, dateHeight + dayOfWeekHeight);
@@ -299,6 +299,19 @@ namespace SerpThunder
 
             // Рисуем текст
             canvas.DrawText(text, x, y, paintToUse);
+        }
+        private static void DrawDateCenteredText(SKCanvas canvas, string text, SKRect rect, SKPaint paint)
+        {
+            // Измеряем границы текста
+            var bounds = new SKRect();
+            paint.MeasureText(text, ref bounds);
+
+            // Идеальное центрирование для даты
+            float x = rect.MidX - (bounds.Width / 2);
+            float y = rect.MidY + (paint.TextSize / 3);
+
+            // Рисуем текст
+            canvas.DrawText(text, x, y, paint);
         }
     }
 }
