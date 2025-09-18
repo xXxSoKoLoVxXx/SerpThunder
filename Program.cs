@@ -197,18 +197,11 @@ class Program
                     break;
 
                 case "/group_old":
-                    var previousSchedulePath = GetPreviousSchedulePath(chatId);
-                    if (previousSchedulePath != null)
-                    {
-                        await botClient.SendTextMessageAsync(chatId,
-                            "Выберите группу для просмотра предыдущего расписания:",
-                            replyMarkup: await CreateGroupKeyboardOld(previousSchedulePath),
-                            cancellationToken: cancellationToken);
-                    }
-                    else
-                    {
-                        await botClient.SendTextMessageAsync(chatId, "Предыдущее расписание не найдено.", cancellationToken: cancellationToken);
-                    }
+                    await ShowPreviousSchedulesList(chatId, cancellationToken);
+                    break;
+
+                case "/history":
+                    await ShowScheduleHistory(chatId, cancellationToken);
                     break;
 
                 case "/full":
@@ -232,7 +225,7 @@ class Program
 
                 default:
                     await botClient.SendTextMessageAsync(chatId, 
-                        "Доступные команды:\n/start - Подписаться на рассылку\n/group - Посмотреть расписание группы\n/group_old - Предыдущее расписание\n/full - Скачать файл расписания\n/settings - Настройки", 
+                        "Доступные команды:\n/start - Подписаться на рассылку\n/group - Посмотреть расписание группы\n/group_old - Предыдущее расписание\n/history - История расписаний за месяц\n/full - Скачать файл расписания\n/settings - Настройки", 
                         cancellationToken: cancellationToken);
                     break;
             }
@@ -296,7 +289,7 @@ class Program
             else if (callbackQuery.Data.StartsWith("group_old_"))
             {
                 var groupName = callbackQuery.Data.Replace("group_old_", "");
-                var previousSchedulePath = GetPreviousSchedulePath(chatId);
+                var previousSchedulePath = GetPreviousSchedulePath();
                 if (previousSchedulePath != null)
                 {
                     var schedule = GetGroupSchedule(previousSchedulePath, groupName);
@@ -336,6 +329,55 @@ class Program
                 else
                 {
                     await botClient.SendTextMessageAsync(chatId, "Предыдущее расписание не найдено.", cancellationToken: cancellationToken);
+                }
+            }
+            else if (callbackQuery.Data.StartsWith("history_"))
+            {
+                var parts = callbackQuery.Data.Split('_');
+                if (parts.Length >= 3)
+                {
+                    var groupName = string.Join("_", parts.Skip(1).Take(parts.Length - 2));
+                    var fileName = parts.Last();
+                    
+                    var filePath = Path.Combine(directoryPath, fileName);
+                    if (System.IO.File.Exists(filePath))
+                    {
+                        var schedule = GetGroupSchedule(filePath, groupName);
+                        var format = formatManager.GetFormat(chatId);
+
+                        if (string.IsNullOrEmpty(schedule))
+                        {
+                            await botClient.SendTextMessageAsync(chatId, "Расписание для этой группы не найдено в выбранном файле.", cancellationToken: cancellationToken);
+                            return;
+                        }
+
+                        if (format == "photo")
+                        {
+                            var imagePath = Path.Combine(Path.GetTempPath(), $"{chatId}_{groupName}_history_schedule.png");
+                            
+                            var tempExcelPath = await CreateTempExcelForConverter(filePath, groupName, schedule);
+                            
+                            Converter.ConvertScheduleToImage(groupName, schedule, imagePath, tempExcelPath);
+
+                            try { System.IO.File.Delete(tempExcelPath); } catch { }
+
+                            await using var stream = new FileStream(imagePath, FileMode.Open, FileAccess.Read);
+                            await botClient.SendPhotoAsync(
+                                chatId,
+                                photo: stream,
+                                caption: $"Расписание для группы {groupName} из архива",
+                                cancellationToken: cancellationToken
+                            );
+                        }
+                        else
+                        {
+                            await botClient.SendTextMessageAsync(chatId, schedule, cancellationToken: cancellationToken);
+                        }
+                    }
+                    else
+                    {
+                        await botClient.SendTextMessageAsync(chatId, "Файл расписания не найден.", cancellationToken: cancellationToken);
+                    }
                 }
             }
             else if (callbackQuery.Data == "photo_schedule")
@@ -385,6 +427,135 @@ class Program
             .ToArray();
 
         return new InlineKeyboardMarkup(keyboardButtons);
+    }
+
+    private static async Task ShowPreviousSchedulesList(long chatId, CancellationToken cancellationToken)
+    {
+        var previousSchedulePath = GetPreviousSchedulePath();
+        if (previousSchedulePath != null)
+        {
+            await botClient.SendTextMessageAsync(chatId,
+                "Выберите группу для просмотра предыдущего расписания:",
+                replyMarkup: await CreateGroupKeyboardOld(previousSchedulePath),
+                cancellationToken: cancellationToken);
+        }
+        else
+        {
+            await botClient.SendTextMessageAsync(chatId, "Предыдущее расписание не найдено.", cancellationToken: cancellationToken);
+        }
+    }
+
+    private static async Task ShowScheduleHistory(long chatId, CancellationToken cancellationToken)
+    {
+        // Очищаем старые файлы (оставляем только за последний месяц)
+        CleanOldScheduleFiles();
+        
+        var scheduleFiles = GetScheduleFilesForMonth();
+        
+        if (scheduleFiles.Count == 0)
+        {
+            await botClient.SendTextMessageAsync(chatId, "Нет сохраненных расписаний за последний месяц.", cancellationToken: cancellationToken);
+            return;
+        }
+
+        // Получаем список групп из текущего файла для выбора
+        var groups = GetGroups(currentFilePath);
+        
+        var message = "Выберите группу для просмотра истории расписаний:";
+        var keyboardButtons = groups
+            .Select(group => InlineKeyboardButton.WithCallbackData(group, $"select_group_history_{group}"))
+            .Chunk(3)
+            .Select(chunk => chunk.ToArray())
+            .ToArray();
+
+        var keyboard = new InlineKeyboardMarkup(keyboardButtons);
+        await botClient.SendTextMessageAsync(chatId, message, replyMarkup: keyboard, cancellationToken: cancellationToken);
+    }
+
+    private static void CleanOldScheduleFiles()
+    {
+        try
+        {
+            var scheduleFiles = Directory.GetFiles(directoryPath, "Schedule_*.xlsx");
+            var oneMonthAgo = DateTime.Now.AddMonths(-1);
+
+            foreach (var file in scheduleFiles)
+            {
+                var fileName = Path.GetFileNameWithoutExtension(file);
+                if (fileName.StartsWith("Schedule_"))
+                {
+                    try
+                    {
+                        // Пытаемся извлечь дату из имени файла
+                        var datePart = fileName.Substring(9); // После "Schedule_"
+                        if (datePart.Length >= 10) // dd_MM_yyyy
+                        {
+                            var dateString = datePart.Substring(0, 10); // Берем первые 10 символов
+                            if (DateTime.TryParseExact(dateString, "dd_MM_yyyy", null, System.Globalization.DateTimeStyles.None, out DateTime fileDate))
+                            {
+                                if (fileDate < oneMonthAgo)
+                                {
+                                    System.IO.File.Delete(file);
+                                    Console.WriteLine($"Удален старый файл: {file}");
+                                }
+                            }
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"Ошибка при обработке файла {file}: {ex.Message}");
+                    }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Ошибка при очистке старых файлов: {ex.Message}");
+        }
+    }
+
+    private static List<FileInfo> GetScheduleFilesForMonth()
+    {
+        try
+        {
+            var scheduleFiles = Directory.GetFiles(directoryPath, "Schedule_*.xlsx");
+            var validFiles = new List<FileInfo>();
+            var oneMonthAgo = DateTime.Now.AddMonths(-1);
+
+            foreach (var file in scheduleFiles)
+            {
+                var fileName = Path.GetFileNameWithoutExtension(file);
+                if (fileName.StartsWith("Schedule_"))
+                {
+                    try
+                    {
+                        var datePart = fileName.Substring(9);
+                        if (datePart.Length >= 10)
+                        {
+                            var dateString = datePart.Substring(0, 10);
+                            if (DateTime.TryParseExact(dateString, "dd_MM_yyyy", null, System.Globalization.DateTimeStyles.None, out DateTime fileDate))
+                            {
+                                if (fileDate >= oneMonthAgo)
+                                {
+                                    validFiles.Add(new FileInfo(file));
+                                }
+                            }
+                        }
+                    }
+                    catch
+                    {
+                        // Игнорируем файлы с неправильными именами
+                    }
+                }
+            }
+
+            return validFiles.OrderByDescending(f => f.CreationTime).ToList();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Ошибка при получении списка файлов: {ex.Message}");
+            return new List<FileInfo>();
+        }
     }
 
     private static async Task<InlineKeyboardMarkup> CreateGroupKeyboardOld(string filePath)
@@ -539,66 +710,37 @@ class Program
         if (string.IsNullOrEmpty(cellText))
             return "";
 
-        // Парсим дату из текста вида "РАСПИСАНИЕ ЗАНЯТИЙ НА 11 СЕНТЯБРЯ, ЧЕТВЕРГ"
+        // Парсим дату из текста вида "РАСПИСАНИЕ ЗАНЯТИЙ НА 19 СЕНТЯБРЯ, ПЯТНИЦА"
         try
         {
-            // Убираем префикс "РАСПИСАНИЕ ЗАНЯТИЙ НА "
-            string datePattern = "РАСПИСАНИЕ ЗАНЯТИЙ НА ";
-            if (cellText.StartsWith(datePattern, StringComparison.OrdinalIgnoreCase))
+            // Ищем текст после "НА " и до конца строки
+            int naIndex = cellText.IndexOf("НА ", StringComparison.OrdinalIgnoreCase);
+            if (naIndex >= 0)
             {
-                cellText = cellText.Substring(datePattern.Length).Trim();
+                string dateWithDay = cellText.Substring(naIndex + 3).Trim(); // "19 СЕНТЯБРЯ, ПЯТНИЦА"
+                
+                // Преобразуем в нижний регистр
+                dateWithDay = dateWithDay.ToLower();
+                
+                // Возвращаем очищенную дату
+                return dateWithDay; // "19 сентября, пятница"
             }
 
-            // Разделяем по запятой, чтобы отделить дату от дня недели
-            var parts = cellText.Split(',');
-            if (parts.Length >= 1)
+            // Если не найден паттерн с "НА", пробуем старый формат
+            string prefix = "РАСПИСАНИЕ ЗАНЯТИЙ НА ";
+            if (cellText.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
             {
-                string datePart = parts[0].Trim(); // "11 СЕНТЯБРЯ"
-                string dayOfWeek = parts.Length > 1 ? parts[1].Trim() : ""; // "ЧЕТВЕРГ"
-
-                // Преобразуем дату в более читаемый формат
-                var dateParts = datePart.Split(' ');
-                if (dateParts.Length >= 2)
-                {
-                    string day = dateParts[0];
-                    string month = dateParts[1].ToLower();
-                    
-                    // Преобразуем название месяца
-                    string monthName = month switch
-                    {
-                        "января" => "января",
-                        "февраля" => "февраля", 
-                        "марта" => "марта",
-                        "апреля" => "апреля",
-                        "мая" => "мая",
-                        "июня" => "июня",
-                        "июля" => "июля",
-                        "августа" => "августа",
-                        "сентября" => "сентября",
-                        "октября" => "октября",
-                        "ноября" => "ноября",
-                        "декабря" => "декабря",
-                        _ => month
-                    };
-
-                    if (!string.IsNullOrEmpty(dayOfWeek))
-                    {
-                        return $"{day} {monthName}, {dayOfWeek.ToLower()}";
-                    }
-                    else
-                    {
-                        return $"{day} {monthName}";
-                    }
-                }
+                cellText = cellText.Substring(prefix.Length).Trim().ToLower();
+                return cellText;
             }
 
-            // Если не удалось распарсить, возвращаем оригинальный текст
-            return cellText;
+            // Если ничего не подошло, возвращаем оригинальный текст в нижнем регистре
+            return cellText.ToLower();
         }
         catch
         {
-            // В случае ошибки возвращаем оригинальный текст
-            return cellText;
+            // В случае ошибки возвращаем оригинальный текст в нижнем регистре
+            return cellText.ToLower();
         }
     }
 
@@ -876,12 +1018,18 @@ class Program
         };
     }
 
-    private static string GetPreviousSchedulePath(long chatId)
+    private static string GetPreviousSchedulePath()
     {
         var scheduleFiles = Directory.GetFiles(directoryPath, "Schedule_*.xlsx");
         if (scheduleFiles.Length < 2) return null;
 
-        return scheduleFiles.OrderByDescending(f => new FileInfo(f).CreationTime).Skip(1).FirstOrDefault();
+        // Получаем все файлы, сортируем по дате создания и берем предпоследний
+        var sortedFiles = scheduleFiles
+            .Select(f => new FileInfo(f))
+            .OrderByDescending(f => f.CreationTime)
+            .ToList();
+
+        return sortedFiles.Count > 1 ? sortedFiles[1].FullName : null;
     }
 
     public class ScheduleBlock
