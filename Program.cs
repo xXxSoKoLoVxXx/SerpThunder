@@ -200,8 +200,38 @@ class Program
                     await ShowPreviousSchedulesList(chatId, cancellationToken);
                     break;
 
-                case "/history":
-                    await ShowScheduleHistory(chatId, cancellationToken);
+                case "/echpochmak":
+                    await UpdateScheduleAndNotify(); // Обновляем расписание
+                    var echpochmarkSchedule = GetGroupSchedule(currentFilePath, "1222");
+                    var echpochmarkFormat = formatManager.GetFormat(chatId);
+
+                    if (string.IsNullOrEmpty(echpochmarkSchedule))
+                    {
+                        await botClient.SendTextMessageAsync(chatId, "Расписание для группы 1222 не найдено.", cancellationToken: cancellationToken);
+                        return;
+                    }
+
+                    if (echpochmarkFormat == "photo")
+                    {
+                        var imagePath = Path.Combine(Path.GetTempPath(), $"{chatId}_1222_schedule.png");
+                        var tempExcelPath = await CreateTempExcelForConverter(currentFilePath, "1222", echpochmarkSchedule);
+                        
+                        Converter.ConvertScheduleToImage("1222", echpochmarkSchedule, imagePath, tempExcelPath);
+
+                        try { System.IO.File.Delete(tempExcelPath); } catch { }
+
+                        await using var stream = new FileStream(imagePath, FileMode.Open, FileAccess.Read);
+                        await botClient.SendPhotoAsync(
+                            chatId,
+                            photo: stream,
+                            caption: "Текущее расписание для группы 1222",
+                            cancellationToken: cancellationToken
+                        );
+                    }
+                    else
+                    {
+                        await botClient.SendTextMessageAsync(chatId, echpochmarkSchedule, cancellationToken: cancellationToken);
+                    }
                     break;
 
                 case "/full":
@@ -223,9 +253,12 @@ class Program
                         cancellationToken: cancellationToken);
                     break;
 
+                case "/history":
+                    await ShowScheduleHistory(chatId, cancellationToken);
+                    break;
                 default:
                     await botClient.SendTextMessageAsync(chatId, 
-                        "Доступные команды:\n/start - Подписаться на рассылку\n/group - Посмотреть расписание группы\n/group_old - Предыдущее расписание\n/history - История расписаний за месяц\n/full - Скачать файл расписания\n/settings - Настройки", 
+                        "Доступные команды:\n/start - Подписаться на рассылку\n/group - Посмотреть расписание группы\n/group_old - Предыдущее расписание\n/history - История расписаний за месяц\n/echpochmak - Расписание группы 1222\n/full - Скачать файл расписания\n/settings - Настройки", 
                         cancellationToken: cancellationToken);
                     break;
             }
@@ -331,13 +364,39 @@ class Program
                     await botClient.SendTextMessageAsync(chatId, "Предыдущее расписание не найдено.", cancellationToken: cancellationToken);
                 }
             }
-            else if (callbackQuery.Data.StartsWith("history_"))
+            else if (callbackQuery.Data.StartsWith("history_date_"))
+            {
+                var dateKey = callbackQuery.Data.Replace("history_date_", "");
+                var scheduleFiles = GetScheduleFilesForMonth();
+                var selectedFile = scheduleFiles.FirstOrDefault(f => 
+                    f.Name.Replace("Schedule_", "").Replace(".xlsx", "").StartsWith(dateKey));
+
+                if (selectedFile != null)
+                {
+                    var groups = GetGroups(selectedFile.FullName);
+                    var message = $"Выберите группу для просмотра расписания на {dateKey.Replace("_", ".")}:";
+                    
+                    var keyboardButtons = groups
+                        .Select(group => InlineKeyboardButton.WithCallbackData(group, $"history_group_{group}_{selectedFile.Name}"))
+                        .Chunk(3)
+                        .Select(chunk => chunk.ToArray())
+                        .ToArray();
+
+                    var keyboard = new InlineKeyboardMarkup(keyboardButtons);
+                    await botClient.SendTextMessageAsync(chatId, message, replyMarkup: keyboard, cancellationToken: cancellationToken);
+                }
+                else
+                {
+                    await botClient.SendTextMessageAsync(chatId, "Файл расписания не найден.", cancellationToken: cancellationToken);
+                }
+            }
+            else if (callbackQuery.Data.StartsWith("history_group_"))
             {
                 var parts = callbackQuery.Data.Split('_');
-                if (parts.Length >= 3)
+                if (parts.Length >= 4)
                 {
-                    var groupName = string.Join("_", parts.Skip(1).Take(parts.Length - 2));
-                    var fileName = parts.Last();
+                    var groupName = parts[2];
+                    var fileName = string.Join("_", parts.Skip(3));
                     
                     var filePath = Path.Combine(directoryPath, fileName);
                     if (System.IO.File.Exists(filePath))
@@ -458,18 +517,44 @@ class Program
             return;
         }
 
-        // Получаем список групп из текущего файла для выбора
-        var groups = GetGroups(currentFilePath);
+        // Создаем кнопки с датами
+        var dateButtons = new List<InlineKeyboardButton[]>();
         
-        var message = "Выберите группу для просмотра истории расписаний:";
-        var keyboardButtons = groups
-            .Select(group => InlineKeyboardButton.WithCallbackData(group, $"select_group_history_{group}"))
-            .Chunk(3)
-            .Select(chunk => chunk.ToArray())
-            .ToArray();
+        foreach (var file in scheduleFiles)
+        {
+            try
+            {
+                var fileName = Path.GetFileNameWithoutExtension(file.Name);
+                if (fileName.StartsWith("Schedule_"))
+                {
+                    var datePart = fileName.Substring(9); // После "Schedule_"
+                    if (datePart.Length >= 10)
+                    {
+                        var dateString = datePart.Substring(0, 10); // dd_MM_yyyy
+                        if (DateTime.TryParseExact(dateString, "dd_MM_yyyy", null, System.Globalization.DateTimeStyles.None, out DateTime fileDate))
+                        {
+                            var displayDate = fileDate.ToString("dd.MM.yyyy");
+                            dateButtons.Add(new[] { 
+                                InlineKeyboardButton.WithCallbackData(displayDate, $"history_date_{dateString}")
+                            });
+                        }
+                    }
+                }
+            }
+            catch
+            {
+                // Игнорируем файлы с неправильными именами
+            }
+        }
 
-        var keyboard = new InlineKeyboardMarkup(keyboardButtons);
-        await botClient.SendTextMessageAsync(chatId, message, replyMarkup: keyboard, cancellationToken: cancellationToken);
+        if (dateButtons.Count == 0)
+        {
+            await botClient.SendTextMessageAsync(chatId, "Не найдено расписаний с корректными датами.", cancellationToken: cancellationToken);
+            return;
+        }
+
+        var keyboard = new InlineKeyboardMarkup(dateButtons);
+        await botClient.SendTextMessageAsync(chatId, "Выберите дату для просмотра расписания:", replyMarkup: keyboard, cancellationToken: cancellationToken);
     }
 
     private static void CleanOldScheduleFiles()
@@ -577,32 +662,25 @@ class Program
 
         var groups = new List<string>();
         
-        // Проверяем разные варианты расположения групп
-        // Вариант 1: C2:AA2 (понедельник с классным часом)
-        for (int col = 3; col <= 27; col++) // C=3, AA=27
-        {
-            var groupName = worksheet.Cells[2, col].Text?.Trim();
-            if (!string.IsNullOrEmpty(groupName) && !groups.Contains(groupName))
-            {
-                groups.Add(groupName);
-            }
-        }
-
-        // Вариант 2 и 3: D2:AA2 (стандартные варианты)
+        // Проверяем диапазон D2:AA2 для групп
         for (int col = 4; col <= 27; col++) // D=4, AA=27
         {
             var groupName = worksheet.Cells[2, col].Text?.Trim();
-            if (!string.IsNullOrEmpty(groupName) && !groups.Contains(groupName))
+            if (!string.IsNullOrEmpty(groupName) && 
+                !groups.Contains(groupName) && 
+                groupName.ToUpper() != "ВРЕМЯ") // Исключаем "ВРЕМЯ"
             {
                 groups.Add(groupName);
             }
         }
 
-        // Вариант 3: второе расписание D9:AA9
+        // Проверяем второе расписание D9:AA9 если есть
         for (int col = 4; col <= 27; col++)
         {
             var groupName = worksheet.Cells[9, col].Text?.Trim();
-            if (!string.IsNullOrEmpty(groupName) && !groups.Contains(groupName))
+            if (!string.IsNullOrEmpty(groupName) && 
+                !groups.Contains(groupName) && 
+                groupName.ToUpper() != "ВРЕМЯ")
             {
                 groups.Add(groupName);
             }
@@ -637,7 +715,7 @@ class Program
     {
         var blocks = new List<ScheduleBlock>();
 
-        // Вариант 1: Понедельник с классным часом
+        // Вариант 1: Понедельник с классным часом - исправленные диапазоны
         if (!string.IsNullOrEmpty(worksheet.Cells[3, 3].Text) && 
             worksheet.Cells[3, 3].Text.Contains("Классный час"))
         {
@@ -645,14 +723,14 @@ class Program
             {
                 DateCell = "A1",
                 GroupRow = 2,
-                GroupStartCol = 3, // C
-                GroupEndCol = 18, // R
-                TimeStartRow = 3,
-                TimeCol = 2, // B
-                ScheduleStartRow = 3,
-                ScheduleEndRow = 8,
-                ScheduleStartCol = 3, // C
-                ScheduleEndCol = 18, // R
+                GroupStartCol = 4, // D
+                GroupEndCol = 27, // AA
+                TimeStartRow = 5,
+                TimeCol = 3, // C
+                ScheduleStartRow = 5,
+                ScheduleEndRow = 9,
+                ScheduleStartCol = 4, // D
+                ScheduleEndCol = 19, // S
                 HasClassHour = true
             });
         }
